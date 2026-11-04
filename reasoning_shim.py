@@ -286,7 +286,7 @@ app = Starlette(routes=[
 ])
 
 
-CHECK_PROMPTS = ["hi", "thanks!", "hello!", "ok cool", "good morning", "bye!", "nice, that worked", "you there?"]
+CHECK_PROMPTS = ["hi", "thanks!", "hello!", "ok cool", "good morning", "bye!", "hey", "thank you so much"]
 # Thinking that leaked past a forced </think>: planning bullets / headings, or a reply that
 # starts mid-sentence (lowercase or punctuation), or one that ran to max_tokens.
 _LEAK = re.compile(r"(\*\*\s*(draft|analy|option|plan|step|determine|goal)|^\s*[*\-]\s{2,}|options?:|thinking process|analy[sz]e the|drafting|self-correction)", re.I | re.M)
@@ -321,7 +321,10 @@ def main(argv=None):
                 print(json.dumps(json.load(r), indent=1))
             return 0
         results, bad = [], 0
-        for prompt in CHECK_PROMPTS[:a.n]:
+        # Only prompts that take the budgeted path: the check is about how a forced </think>
+        # closes, and an unbudgeted turn can legitimately outrun max_tokens while still thinking.
+        probes = [q for q in CHECK_PROMPTS if classify([{"role": "user", "content": q}]) == "trivial"][:a.n]
+        for prompt in probes:
             body = json.dumps({"model": a.model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400}).encode()
             req = urllib.request.Request(base + "/v1/chat/completions", data=body, headers={"Content-Type": "application/json"})
             t = time.time()
