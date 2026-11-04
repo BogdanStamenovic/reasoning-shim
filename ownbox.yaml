@@ -1,0 +1,14 @@
+schema: 1
+name: reasoning-shim
+description: OpenAI-compatible shim for Qwen3.5-template thinking models on llama-server. Caps reasoning per turn (honours reasoning_effort, which llama-server ignores) and lifts tool calls stranded inside an unclosed think block into real tool_calls.
+tags: [llm, llama.cpp, qwen, hermes, proxy, reasoning, tool-calls]
+install:
+  platforms: [linux]
+  setup:
+    linux: [scripts/lifecycle.sh setup]
+  update:
+    linux: [scripts/lifecycle.sh update]
+  remove:
+    linux: [scripts/lifecycle.sh remove]
+command:
+  linux: .venv/bin/reasoning-shim
