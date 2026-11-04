@@ -39,3 +39,13 @@ def test_reasoning_effort_maps_to_budget():
     assert pick_budget({"messages": U, "reasoning_effort": "low"}) == 256
     assert pick_budget({"messages": U, "thinking_budget_tokens": 300}) is None
     assert pick_budget({"messages": U, "reasoning_effort": "high"}) == -1
+
+def test_leak_detector():
+    from reasoning_shim import looks_leaked
+    assert not looks_leaked("Hello! 👋 How can I help you today?", "stop")
+    assert not looks_leaked("Good morning! ☀️", "stop")
+    assert looks_leaked('", but not just "hi").\n    *   Options: "Hello!"', "stop")
+    assert looks_leaked("2.  **Determine the Goal:**\n    *   Acknowledge", "stop")
+    assert looks_leaked(":**     *   Goal: Acknowledge the thanks", "stop")
+    assert looks_leaked("Hello!", "length")
+    assert looks_leaked("", "stop")

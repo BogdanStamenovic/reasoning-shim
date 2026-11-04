@@ -286,6 +286,17 @@ app = Starlette(routes=[
 ])
 
 
+CHECK_PROMPTS = ["hi", "thanks!", "hello!", "ok cool", "good morning", "bye!", "nice, that worked", "you there?"]
+# Thinking that leaked past a forced </think>: planning bullets / headings, or a reply that
+# starts mid-sentence (lowercase or punctuation), or one that ran to max_tokens.
+_LEAK = re.compile(r"(\*\*\s*(draft|analy|option|plan|step|determine|goal)|^\s*[*\-]\s{2,}|options?:|thinking process|analy[sz]e the|drafting|self-correction)", re.I | re.M)
+_MIDSENT = re.compile(r"^\s*[a-z\"',.:)]")
+
+
+def looks_leaked(text: str, finish: str | None) -> bool:
+    return finish == "length" or not text.strip() or bool(_LEAK.search(text[:400])) or bool(_MIDSENT.match(text))
+
+
 def main(argv=None):
     """reasoning-shim serve | status | check  (exit 0 ok, 1 runtime failure, 2 usage)."""
     import argparse
@@ -295,8 +306,9 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("serve", help="run in the foreground (the systemd unit does this)")
     sub.add_parser("status", help="print the running shim's counters")
-    ck = sub.add_parser("check", help="send one 'hi' through the shim and report reasoning size")
+    ck = sub.add_parser("check", help="send trivial prompts through the shim; exit 1 if any reply leaks thinking")
     ck.add_argument("--model", default=os.environ.get("SHIM_CHECK_MODEL", "piccolo-gorgone:9b"))
+    ck.add_argument("-n", type=int, default=5, help="how many trivial prompts to send (max %d)" % len(CHECK_PROMPTS))
     a = ap.parse_args(argv)
     base = f"http://{HOST}:{PORT}"
     if a.cmd == "serve":
@@ -308,16 +320,22 @@ def main(argv=None):
             with urllib.request.urlopen(base + "/shim/stats", timeout=5) as r:
                 print(json.dumps(json.load(r), indent=1))
             return 0
-        body = json.dumps({"model": a.model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 512}).encode()
-        req = urllib.request.Request(base + "/v1/chat/completions", data=body, headers={"Content-Type": "application/json"})
-        t = time.time()
-        with urllib.request.urlopen(req, timeout=300) as r:
-            d = json.load(r)
-        m = d["choices"][0]["message"]
-        print(json.dumps({"ok": bool((m.get("content") or "").strip()), "secs": round(time.time() - t, 1),
-                          "reasoning_chars": len(m.get("reasoning_content") or ""), "content": (m.get("content") or "")[:120],
-                          "completion_tokens": d.get("usage", {}).get("completion_tokens")}, indent=1))
-        return 0 if (m.get("content") or "").strip() else 1
+        results, bad = [], 0
+        for prompt in CHECK_PROMPTS[:a.n]:
+            body = json.dumps({"model": a.model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400}).encode()
+            req = urllib.request.Request(base + "/v1/chat/completions", data=body, headers={"Content-Type": "application/json"})
+            t = time.time()
+            with urllib.request.urlopen(req, timeout=300) as r:
+                d = json.load(r)
+            ch = d["choices"][0]; m = ch["message"]
+            c = m.get("content") or ""
+            leaked = looks_leaked(c, ch.get("finish_reason"))
+            bad += leaked
+            results.append({"prompt": prompt, "ok": not leaked, "secs": round(time.time() - t, 1),
+                            "reasoning_chars": len(m.get("reasoning_content") or ""),
+                            "completion_tokens": d.get("usage", {}).get("completion_tokens"), "reply": c[:100]})
+        print(json.dumps({"leaked": f"{bad}/{len(results)}", "results": results}, indent=1))
+        return 1 if bad else 0
     except Exception as e:
         print(f"reasoning-shim: {base} unreachable or upstream failed: {e}", file=sys.stderr)
         return 1
