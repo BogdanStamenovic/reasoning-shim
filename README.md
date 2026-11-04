@@ -38,6 +38,12 @@ Small samples (n = 2–9 per cell): read these as a screen, not a benchmark.
 | Hermes 0.21.4, same task, stranded calls | 6 in 3 runs, 0/3 solved | 7 caught and repaired in one run, agent kept going |
 | Hard math, 1024-token cap vs uncapped | — | 4/4 correct capped; uncapped answered 1 of 4 within 8192 tokens |
 
+## Server requirement
+
+Start llama-server with **`--reasoning-budget-message $'\n'`** (a single newline). When the budget runs out, llama-server forces `<message></think>`; with no message that is a bare `</think>` in the middle of a line, and piccolo then carries on thinking in the visible answer. Measured on trivial prompts at a 96-token budget: **7/20 replies leaked planning text without the flag, 0/20 with it** (a full sentence as the message also gave 0/20; the newline is language-neutral). The flag is server-wide, so it cannot be set per request. For gpu-share, add it to the profile's `extra_args`, e.g. `["-ub", "256", "--reasoning-budget-message", "\n"]`.
+
+`reasoning-shim check` catches a missing flag: it sends trivial prompts through the budgeted path and exits 1 if any reply looks like leaked thinking.
+
 ## Install
 
 ```bash
@@ -54,7 +60,7 @@ Setup creates a venv, writes `~/.config/reasoning-shim/env` (only if missing), i
 
 ```bash
 reasoning-shim status     # counters: requests, stranded, repaired, budget per class
-reasoning-shim check      # one "hi" through the shim; prints reasoning size and the reply
+reasoning-shim check      # trivial prompts through the budgeted path; exit 1 if a reply leaks thinking
 reasoning-shim serve      # foreground (what the unit runs)
 ```
 
@@ -64,7 +70,8 @@ Configuration is environment variables in `~/.config/reasoning-shim/env`. Edit, 
 
 - **The trivial-prompt classifier is a regex.** It catches greetings and thanks, but misses most of the long tail: "What is 2+2?" and "Say hello in French." still get unlimited reasoning (574–1601 tokens measured). Clients that send `reasoning_effort` are not affected. A learned router is planned in piccolo-tune.
 - **The default budget is unlimited.** On hard prompts piccolo can reason past 8192 tokens without ever answering. A 1024–2048 cap fixed that in a small test (4/4 correct), but a cap could also cut off a genuinely long problem, so it is not on by default. Set `SHIM_BUDGET_DEFAULT=2048` if runaways matter more to you.
-- **Budget cut-offs are abrupt.** llama-server's `--reasoning-budget-message` (text injected before the forced `</think>`) is a server flag, not a per-request field, so the shim cannot set it.
+- **Needs a server flag for clean cut-offs** (see Server requirement). Without it, roughly a third of budget-cut replies leak thinking into the answer.
+- **The leak check is a heuristic**: regexes for planning bullets and replies that start mid-sentence. It catches the failure seen in practice, not every possible one.
 - **Repair only covers the Qwen3.5 XML call format** (`<tool_call><function=NAME><parameter=P>…`). Other templates pass through unrepaired.
 - **Repair was proven live on Hermes 0.21.4 only, and that run did not finish** (the host ran out of RAM), so end-to-end task success with repair has not been shown. Hermes 0.22.6+ almost never triggers the bug: 0 stranded calls in ~120 runs.
 - **No auth and no TLS.** It binds to localhost by default; don't expose it.
